@@ -17,13 +17,33 @@ class KiwoomRestAPI:
     def __init__(self):
         self.tr = KiwoomTR()
 
+    def get_stock_name(self, code: str) -> str:
+        """주식의 한글명을 조회한다."""
+        params = {
+            "stk_cd": f"{code}_AL",
+        }
+        info = self.tr.fn_ka10007(params)
+        if isinstance(info, dict):
+            return info.get("stk_nm", code)
+        return code
+
     def get_stock_codes(self):
         """모든 상장 종목 코드를 반환한다."""
-        stock_list = self.tr.fn_ka10099(data={})
+        try:
+            stock_list = self.tr.fn_ka10099(data={})
+        except Exception as e:
+            print(f"종목 코드 조회 중 오류 발생: {e}")
+            return []
+
+        if not isinstance(stock_list, list):
+            print("종목 코드 목록을 가져오지 못했습니다: 반환값이 리스트가 아닙니다.")
+            return []
+
         codes = []
         for item in stock_list:
             code = item.get("stk_cd", "")
-            codes.append(code.replace("_AL", ""))
+            if code:
+                codes.append(code.replace("_AL", ""))
         return codes
 
     def request_daily(self, code: str, days: int = 6) -> pd.DataFrame:
@@ -111,17 +131,24 @@ class KiwoomRestAPI:
 
 
 def fetch_selected_minute():
-    save_dir = r"C:\\Users\\heo31\\PycharmProjects\\stock\\data_selected_minute"
+    save_dir = os.path.join(os.path.dirname(__file__), "data_selected_minute")
     os.makedirs(save_dir, exist_ok=True)
 
     api = KiwoomRestAPI()
 
     codes = api.get_stock_codes()
+    if not codes:
+        print("종목 코드를 가져오지 못해 작업을 종료합니다.")
+        return
 
     for idx, code in enumerate(codes, 1):
         print(f"[{idx}/{len(codes)}] {code} -> 일봉 확인 중...")
         try:
             df_daily = api.request_daily(code, days=6)
+            if df_daily.empty:
+                print(f"  {code} 일봉 데이터 없음 - 스킵")
+                continue
+
             df_daily["pct_change"] = df_daily["close"].pct_change()
             cnt = (df_daily["pct_change"] >= 0.15).sum()
             if cnt < 2:
@@ -132,7 +159,9 @@ def fetch_selected_minute():
             if df_min.empty:
                 print(f"  {code} 1분봉 데이터 없음")
                 continue
-            filename = f"{code}_1m.csv"
+            stock_name = api.get_stock_name(code)
+            safe_name = stock_name.replace('/', '_').replace('\\', '_')
+            filename = f"{safe_name}.csv"
             path = os.path.join(save_dir, filename)
             df_min.to_csv(path, index=False, encoding="utf-8-sig")
             print(f"  저장 완료: {path}")
